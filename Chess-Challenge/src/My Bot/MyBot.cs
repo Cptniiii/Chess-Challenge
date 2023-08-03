@@ -1,15 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using ChessChallenge.API;
 
 public class MyBot : IChessBot
 {
-    public Move Think(Board board, Timer timer)
-    {
-        return Think(board, timer, 0);
-    }
+    readonly int depth = 4;
 
-    private Move Think(Board board, Timer timer, int lookahead)
+    public Move Think(Board board, Timer timer)
     {
         Move[] allMoves = board.GetLegalMoves();
 
@@ -18,55 +16,30 @@ public class MyBot : IChessBot
             if (MoveIsCheckmate(board, move)) return move;
         }
 
-        int highestScore = -1000;
-        List<Move> bestMoves = new List<Move>();
+        // Order for better AlphaBeta
+        allMoves = allMoves.OrderBy(move => 8 - (int)move.CapturePieceType).ToArray();
+        
+        int bestEval = board.IsWhiteToMove ? int.MinValue : int.MaxValue;
+        List<Move> bestMoves = new();
         for (int i = 0; i < allMoves.Length; i++) {
-            int moveScore = 0;
+            int eval = 0;
             Move current = allMoves[i];
-            moveScore = current.IsCapture ? moveScore + 10 + ((int)current.CapturePieceType) : moveScore;
-            moveScore = current.MovePieceType == PieceType.King || current.MovePieceType == PieceType.Queen ? moveScore - 5 : moveScore;
-            moveScore = current.IsCastles ? moveScore + 5 : moveScore;
-            moveScore = current.IsPromotion ? moveScore + 5 + ((int)current.PromotionPieceType) : moveScore - 5;
-            moveScore = current.TargetSquare.Rank == 3 && current.TargetSquare.File == 3 ? moveScore + 10 : moveScore;
-            moveScore = current.TargetSquare.Rank == 3 && current.TargetSquare.File == 4 ? moveScore + 10 : moveScore;
-            moveScore = current.TargetSquare.Rank == 4 && current.TargetSquare.File == 3 ? moveScore + 10 : moveScore;
-            moveScore = current.TargetSquare.Rank == 4 && current.TargetSquare.File == 4 ? moveScore + 10 : moveScore;
             board.MakeMove(current);
-            moveScore = board.IsInCheck() ? moveScore + 10 : moveScore;
-            if (board.IsDraw()) {
-                moveScore = moveScore - 100;
-            } else if (board.IsInCheckmate()) {
-                moveScore = moveScore + 100;
-            } else if (board.IsInsufficientMaterial()) {
-                moveScore = moveScore - 100;
-            } else if (board.IsRepeatedPosition()) {
-                moveScore = moveScore - 100;
-            } else if (board.GetLegalMoves().Length == 0) {
-                moveScore = moveScore + 100;
-            } else if (moveScore > highestScore * .9 && lookahead < 3) {
-                Move result = Think(board, timer, lookahead + 1);
-                moveScore = MoveIsCheckmate(board, result) ? moveScore - 100 : moveScore;
-                moveScore = MoveIsInsufficientMaterial(board, result) ? moveScore - 100 : moveScore;
-                moveScore = MoveIsRepeatedPosition(board, result) ? moveScore - 100 : moveScore;
-                moveScore = result.IsCapture ? moveScore - 20 - ((int)result.CapturePieceType) : moveScore;
-                board.MakeMove(result);
-                moveScore = board.IsInCheck() ? moveScore - 10 : moveScore + 5;
-                board.UndoMove(result);
-            }
+            eval += AlphaBeta(board, this.depth, int.MinValue, int.MaxValue, board.IsWhiteToMove);
             board.UndoMove(current);
-            if (bestMoves.Count == 0) {
+            if (bestMoves.Count() == 0) {
                 bestMoves.Add(current);
-                highestScore = moveScore;
-            } else if (moveScore > highestScore) {
+                bestEval = eval;
+            } else if ((board.IsWhiteToMove && eval > bestEval) || (!board.IsWhiteToMove && eval < bestEval)) {
                 bestMoves.Clear();
                 bestMoves.Add(current);
-                highestScore = moveScore;
-            } else if (moveScore == highestScore) {
+                bestEval = eval;
+            } else if (eval == bestEval) {
                 bestMoves.Add(current);
             }
         }
-        Random random = new Random();
-        int randomIndex = random.Next(0, bestMoves.Count);
+        Random random = new();
+        int randomIndex = random.Next(0, bestMoves.Count());
         Move randomBestMove = bestMoves[randomIndex];
         return randomBestMove;
     }
@@ -80,21 +53,59 @@ public class MyBot : IChessBot
         return isMate;
     }
 
-    // Test if this move causes insufficient material
-    bool MoveIsInsufficientMaterial(Board board, Move move)
-    {
-        board.MakeMove(move);
-        bool isInsufficient = board.IsInsufficientMaterial();
-        board.UndoMove(move);
-        return isInsufficient;
+    // Position evaluation algorithm
+    int EvaluatePosition(Board board) {
+        // Piece values: null, pawn, knight, bishop, rook, queen, king
+        int[] pieceValues = { 0, 100, 320, 330, 500, 900, 20000 };
+
+        int eval = 0;
+        eval += pieceValues[(int)PieceType.Bishop]* Convert.ToString((long)board.GetPieceBitboard(PieceType.Bishop, true), 2).Count(c => c == '1');
+        eval += pieceValues[(int)PieceType.Knight] * Convert.ToString((long)board.GetPieceBitboard(PieceType.Knight, true), 2).Count(c => c == '1');
+        eval += pieceValues[(int)PieceType.Pawn] * Convert.ToString((long)board.GetPieceBitboard(PieceType.Pawn, true), 2).Count(c => c == '1');
+        eval += pieceValues[(int)PieceType.Queen] * Convert.ToString((long)board.GetPieceBitboard(PieceType.Queen, true), 2).Count(c => c == '1');
+        eval += pieceValues[(int)PieceType.Rook] * Convert.ToString((long)board.GetPieceBitboard(PieceType.Rook, true), 2).Count(c => c == '1');
+        eval -= pieceValues[(int)PieceType.Bishop]* Convert.ToString((long)board.GetPieceBitboard(PieceType.Bishop, false), 2).Count(c => c == '1');
+        eval -= pieceValues[(int)PieceType.Knight] * Convert.ToString((long)board.GetPieceBitboard(PieceType.Knight, false), 2).Count(c => c == '1');
+        eval -= pieceValues[(int)PieceType.Pawn] * Convert.ToString((long)board.GetPieceBitboard(PieceType.Pawn, false), 2).Count(c => c == '1');
+        eval -= pieceValues[(int)PieceType.Queen] * Convert.ToString((long)board.GetPieceBitboard(PieceType.Queen, false), 2).Count(c => c == '1');
+        eval -= pieceValues[(int)PieceType.Rook] * Convert.ToString((long)board.GetPieceBitboard(PieceType.Rook, false), 2).Count(c => c == '1');
+
+        return eval;
     }
 
-    // Test if this move causes repetition
-    bool MoveIsRepeatedPosition(Board board, Move move)
+    // Alpha-beta pruning algorithm
+    public int AlphaBeta(Board node, int depth, int alpha, int beta, bool maximizingPlayer)
     {
-        board.MakeMove(move);
-        bool isRepeated = board.IsRepeatedPosition();
-        board.UndoMove(move);
-        return isRepeated;
+        Move[] childNodes = node.GetLegalMoves();
+        childNodes = childNodes.OrderBy(move => 8 - (int)move.CapturePieceType).ToArray();
+        if (depth == 0 || childNodes.Length == 0)
+        {
+            return EvaluatePosition(node);
+        }
+        if (maximizingPlayer) {
+            int value = int.MinValue;
+            foreach (Move child in childNodes) {
+                node.MakeMove(child);
+                value = Math.Max(value, AlphaBeta(node, depth - 1, alpha, beta, false));
+                node.UndoMove(child);
+                alpha = Math.Max(alpha, value);
+                if (beta <= alpha) {
+                    break;
+                }
+            }
+            return value;
+        } else {
+            int value = int.MaxValue;
+            foreach (Move child in childNodes) {
+                node.MakeMove(child);
+                value = Math.Min(value, AlphaBeta(node, depth - 1, alpha, beta, true));
+                node.UndoMove(child);
+                beta = Math.Min(beta, value);
+                if (beta <= alpha) {
+                    break;
+                }
+            }
+            return value;
+        }
     }
 }
