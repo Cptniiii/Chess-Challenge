@@ -1,13 +1,64 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using ChessChallenge.API;
 
 namespace ChessChallenge.Example {
     public class EvilBot : IChessBot
     {
+        readonly bool stockfish = false;
         public Move Think(Board board, Timer timer)
         {
+            if (stockfish) {
+                return Stockfish(board);
+            }
             return Think(board, timer, 0);
+
+        }
+
+        private Move Stockfish(Board board)
+        {
+            string stockfishPath = "C:\\Users\\david\\Documents\\github\\stockfish\\stockfish-windows-x86-64-avx2.exe"; // Set the correct path to the Stockfish binary.
+
+            // Start the Stockfish process.
+            Process stockfishProcess = new();
+            stockfishProcess.StartInfo.FileName = stockfishPath;
+            stockfishProcess.StartInfo.UseShellExecute = false;
+            stockfishProcess.StartInfo.RedirectStandardInput = true;
+            stockfishProcess.StartInfo.RedirectStandardOutput = true;
+            stockfishProcess.Start();
+
+            // Send commands to Stockfish and read its responses.
+            string fen = board.GetFenString();
+            stockfishProcess.StandardInput.WriteLine("isready");
+            stockfishProcess.StandardInput.WriteLine("ucinewgame");
+            //option name UCI_LimitStrength type check default false
+            stockfishProcess.StandardInput.WriteLine("setoption name UCI_LimitStrength value true");
+            //option name UCI_Elo type spin default 1320 min 1320 max 3190
+            stockfishProcess.StandardInput.WriteLine("setoption name UCI_Elo value 1320");
+            stockfishProcess.StandardInput.WriteLine("isready");
+            stockfishProcess.StandardInput.WriteLine("position fen " + fen);
+            stockfishProcess.StandardInput.WriteLine("go movetime 1000");
+
+            // Process the output to get the suggested move.
+            string bestMove = "";
+            string outputLine;
+            while ((outputLine = stockfishProcess.StandardOutput.ReadLine()) != null)
+            {
+                if (outputLine.StartsWith("bestmove")) {
+                    bestMove = outputLine.Split(' ')[1];
+                    break;
+                }
+            }
+
+            // Close the process.
+            stockfishProcess.StandardInput.WriteLine("quit");
+            stockfishProcess.WaitForExit();
+            stockfishProcess.Close();
+
+            Move move = new(bestMove, board);
+
+            return move;
         }
 
         private Move Think(Board board, Timer timer, int lookahead)
